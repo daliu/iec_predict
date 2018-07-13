@@ -191,9 +191,10 @@ yesterday = now - timedelta(hours = 12) # ?
 
 future_window = 12 * 60
 model = IEC(meterdata[:yesterday].fillna(value = 0), prediction_window = future_window)
-algo_keys = ["GP PerExp", "GP PerMatern32", "GP PerMatern52", "ARIMA", "Baseline Finder", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "best4", "best12", "best24"]
+# algo_keys = ["GP PerExp", "GP PerMatern32", "GP PerMatern52", "ARIMA", "Baseline Finder", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "best4", "best12", "best24"]
 # algo_keys = model.algorithms.keys()
 # algo_keys = ["best4", "best12", "best24"]
+algo_keys = ["nn lstm"]
 
 min_rmse = 1000000
 best_algo_name = ""

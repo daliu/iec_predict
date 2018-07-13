@@ -12,22 +12,22 @@ from multiprocessing import Pool, cpu_count
 
 import numpy as np
 import GPy
+import keras
 import statsmodels.api as sm
 import pandas as pd
 import scipy.ndimage.filters
 import scipy.signal
 from scipy import spatial
 from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 import time 
+import pdb
 
+import math
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
-
-from sklearn.preprocessing import MinMaxScaler
-
-import pdb
 
 import matplotlib.pyplot as plt
 
@@ -37,6 +37,7 @@ except:
     from easing import *
 
 cons_col = 'House Consumption'
+
 
 
 def convert_to_timestamp(x):
@@ -91,10 +92,10 @@ def mins_in_day(timestamp):
 
 # frame a sequence as a supervised learning problem
 def timeseries_to_supervised(data, lag=1):
-    df = DataFrame(data.values)
+    df = pd.DataFrame(data)
     columns = [df.shift(i) for i in range(1, lag+1)]
     columns.append(df)
-    df = concat(columns, axis=1)
+    df = pd.concat(columns, axis=1)
     df.fillna(0, inplace=True)
     return df
 
@@ -130,7 +131,7 @@ def find_similar_days(training_data, observation_length, k, interval, method=cos
 
     similar_moments['Similarity'] = [
         method(
-            last_day_vector.as_matrix(columns=[cons_col]), # FutureWarning:Method .as_matrix will be removed in a future version. Use .values instead.
+            last_day_vector.as_matrix(columns=[cons_col]),
             training_data[i - obs_td:i].resample(timedelta(minutes=interval)).sum().as_matrix(columns=[cons_col])
         ) for i in similar_moments.index
     ]
@@ -143,11 +144,16 @@ def find_similar_days(training_data, observation_length, k, interval, method=cos
 
     return indexes
 
+
 def lerp(x, y, alpha):
     assert x.shape == y.shape and x.shape == alpha.shape  # shapes must be equal
+
     x *= 1 - alpha
     y *= alpha
+
     return x + y
+
+
 
 # create a differenced series
 def difference(dataset, interval=1):
@@ -156,6 +162,8 @@ def difference(dataset, interval=1):
         value = dataset[i] - dataset[i - interval]
         diff.append(value)
     return Series(diff)
+
+
 
 # invert differenced value
 def inverse_difference(history, yhat, interval=1):
@@ -341,36 +349,32 @@ class IEC(object):
                                        observation_length_addition=240, short_term_ease_method=easeOutSine,
                                        long_term_ease_method=easeOutCirc),
             "STLF": self.baseline_finder_dumb,
-            "b1": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=200,
+            "b1": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
                           short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=250,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b2": partial(self.baseline_finder, training_window=1440 * 60, k=3, long_interp_range=200,
+            "b2": partial(self.baseline_finder, training_window=1440 * 60, k=3, long_interp_range=250,
                           short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=300,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b3": partial(self.baseline_finder, training_window=1440 * 60, k=6, long_interp_range=200,
+            "b3": partial(self.baseline_finder, training_window=1440 * 60, k=6, long_interp_range=250,
                           short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=200,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b4": partial(self.baseline_finder, training_window=1440 * 60, k=12, long_interp_range=200,
+            "b4": partial(self.baseline_finder, training_window=1440 * 60, k=12, long_interp_range=250,
                           short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=200,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b5": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=200,
+            "b5": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
                           short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=250,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b6": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=200,
+            "b6": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
                           short_interp_range=25, half_window=60, similarity_interval=5, recent_baseline_length=300,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b7": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=200,
+            "b7": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
                           short_interp_range=25, half_window=80, similarity_interval=5, recent_baseline_length=200,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeOutCirc),
-            "b7": partial(self.baseline_finder, training_window=1440 * 60, k=2, long_interp_range=200,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=200,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
             "best4": partial(self.baseline_finder, training_window=1440 * 60, k=4, long_interp_range=180,
@@ -385,40 +389,72 @@ class IEC(object):
                           short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=30,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeInOutCirc),
-            "GP PerExp": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel = "PeriodicExponential", 
+            "GP PerExp": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel="PeriodicExponential", 
                 recent_baseline_length=10),
-            "GP PerMatern32": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel = "PeriodicMatern32", 
+            "GP PerMatern32": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel="PeriodicMatern32", 
                 recent_baseline_length=10),
-            "GP PerMatern52": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel = "PeriodicMatern52", 
-                recent_baseline_length=5)
-        }
+            "GP PerMatern52": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel="PeriodicMatern52", 
+                recent_baseline_length=10),
+            "GP coregionalize": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel='Coregionalize', 
+                recent_baseline_length=10),
+            "GP rbf": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="RBF", 
+                recent_baseline_length=10),           
+            "GP DEtime": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="DEtime", 
+                recent_baseline_length=10),          
+            "GP Poly": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="Poly", 
+                recent_baseline_length=10),
+            "GP Genome": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="DiffGenomeKern", 
+                recent_baseline_length=10),
+            "GP Custom1": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1", 
+                recent_baseline_length=10),
+            "GP Custom1a": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1a", 
+                recent_baseline_length=10),
+            "GP Custom1b": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1b", 
+                recent_baseline_length=10),
+            "GP Custom1c": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1c", 
+                recent_baseline_length=10),
+            "GP Custom1d": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1d", 
+                recent_baseline_length=10),
+            "GP Custom1e": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1e", 
+                recent_baseline_length=10),
+            "GP Custom1f": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom1f", 
+                recent_baseline_length=10),
+            "GP Custom2": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom2", 
+                recent_baseline_length=10),
+            "nn lstm": partial(self.rnn_lstm, training_window = 1440*60, k=7, recent_baseline_length=5)
 
-        # "b k=9 recent_baseline_length=200 short_term_ease_method=easeInOutSine long_term_ease_method=easeOutCirc"
-        algo_name = ""
-        i = 0
-        for k in range(1, 10):
-            algo_name_k = "b k=" + str(k) + " "
-            for recent_baseline_length in range(200, 350, 50):
-                algo_name_recent = "recent_baseline_length=" + str(recent_baseline_length) + " "
-                for short_term_ease_method in [easeOutSine, easeInOutSine, easeInOutQuint]:
-                    algo_name_short = "short_term_ease_method=" + short_term_ease_method.__name__ + " "
-                    for long_term_ease_method in [easeOutCirc, easeInOutCirc, easeInOutExpo]:
-                        algo_name_long = "long_term_ease_method=" + long_term_ease_method.__name__ # + " "
-                        algo_name = algo_name_k + algo_name_recent + algo_name_short + algo_name_long
-                        self.algorithms[algo_name] = partial(self.baseline_finder, training_window=1440 * 60,
-                                                                                   k=k, long_interp_range=200,
-                                                                                   short_interp_range=25,
-                                                                                   half_window=80,
-                                                                                   similarity_interval=5,
-                                                                                   recent_baseline_length=recent_baseline_length,
-                                                                                   observation_length_addition=240,
-                                                                                   short_term_ease_method=short_term_ease_method,
-                                                                                   long_term_ease_method=long_term_ease_method)
+        }
+        self.grid_search()
+
+        def grid_search(self):
+            algo_name = ""
+            i = 0
+            # adjust k parameter range
+            for k in range(1, 10):
+                algo_name_k = "b k=" + str(k) + " "
+                # adjust baseline length range
+                for recent_baseline_length in range(200, 350, 50):
+                    algo_name_recent = "recent_baseline_length=" + str(recent_baseline_length) + " "
+                    # Short-term easing functions
+                    for short_term_ease_method in [easeOutSine, easeInOutSine, easeInOutQuint]:
+                        algo_name_short = "short_term_ease_method=" + short_term_ease_method.__name__ + " "
+                        # Long-term easing functions
+                        for long_term_ease_method in [easeOutCirc, easeInOutCirc, easeInOutExpo]:
+                            algo_name_long = "long_term_ease_method=" + long_term_ease_method.__name__ # + " "
+                            algo_name = algo_name_k + algo_name_recent + algo_name_short + algo_name_long
+                            self.algorithms[algo_name] = partial(self.baseline_finder, training_window=1440 * 60,
+                                                                                       k=k, long_interp_range=200,
+                                                                                       short_interp_range=25,
+                                                                                       half_window=80,
+                                                                                       similarity_interval=5,
+                                                                                       recent_baseline_length=recent_baseline_length,
+                                                                                       observation_length_addition=240,
+                                                                                       short_term_ease_method=short_term_ease_method,
+                                                                                       long_term_ease_method=long_term_ease_method)
 
     def rnn_lstm(self, training_window=1440 * 60, k=7, recent_baseline_length=5):
 
         training_data = self.data.tail(training_window)[[cons_col]]
-
         # observation_length is ALL of the current day (till now) + 4 hours
         observation_length = mins_in_day(self.now) + 4 * 60
 
@@ -428,32 +464,67 @@ class IEC(object):
             .rename(columns={'index':'X', 'House Consumption':'y'})
         )
 
-        scaler = MinMaxScaler(feature_range=(-1, 1))
+        scaler = MinMaxScaler(feature_range=(0, 1))
         X= training_df['X'].values.reshape(-1,1)
 
         X = pd.DataFrame(X)
         Y = pd.DataFrame(training_df['y'])
-        Xs = (X.fillna(value=0)
-                .sample(1000)
-        )
+
+        Xs = (X.fillna(value=0))
         Ys = (Y.fillna(value=0)
-                .pipe(lambda s: (s - s.mean())/s.std()) #### TODO: fix: is this normalization step correct? 
-                .loc[Xs.index]
+#                .pipe(lambda s: (s - s.mean())/s.std()) #### TODO: fix: is this normalization step correct? 
+      #          .loc[Xs.index]
                 .values.reshape((-1,1))
         )
-        Xs = Xs.values.reshape(-1,1)
+        #Xs = Xs.values.reshape(-1,1)
 
-        Ys_supervised = timeseries_to_supervised(Ys, lag=1).values
+        Ys = scaler.fit_transform(Ys)
 
-        input = pd.DataFrame([Xs, Ys]).transpose()
-        input = input.values.reshape(input.shape[0], 1, input.shape[1])
+        lag = 3000
 
+        Ys_supervised = pd.DataFrame(timeseries_to_supervised(Ys, lag=lag).values)
+
+        X = Ys_supervised.take(range(0, lag), axis = 1)
+        Y = Ys_supervised.take([lag], axis = 1)
+
+        print(X.shape)
+        print(X.head)
+
+        X = X.values.reshape(-1,lag)
+        Y = Y.values.reshape(-1,1)
+        X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
+   #     Y = np.reshape(Y, (Y.shape[0], 1, Y.shape[1]))
+
+        # create and fit the LSTM network
+        batch_size = 1
+        model = Sequential()
+        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
+        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
+        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True))
+        model.add(Dense(1))
+        model.compile(loss='mean_squared_error', optimizer='adam')
+
+        for i in range(3):
+            model.fit(X, Y, epochs=1, batch_size=batch_size, verbose=2, shuffle = False)
+            model.reset_states()
+
+        prediction_feeder = np.reshape(X[-1], (1,1,-1))
+        current_prediction = model.predict(prediction_feeder, batch_size=batch_size)
+        trainPredict = scaler.inverse_transform(current_prediction)
+
+        for i in range(self.prediction_window-1):
+            prediction_feeder = np.append(prediction_feeder[0][0][1:lag], current_prediction).reshape(1,1,-1)
+            current_prediction = model.predict(prediction_feeder, batch_size=batch_size)
+            trainPredict = np.append(trainPredict, scaler.inverse_transform(current_prediction))
+
+        return trainPredict
 
     def gaussian_process_regression(self, training_window=1440 * 60, k=7, kernel='PeriodicExponential',recent_baseline_length=5):
 
-        kernel = GPy.kern.PeriodicExponential(1)
-
-        # TODO: Test Kernels
+        if kernel is 'PeriodicExponential': 
+            kernel = GPy.kern.PeriodicExponential(1)
+        if kernel is 'RBF':
+            kernel = GPy.kern.RBF(1)
         if kernel is 'Coregionalize':
             kernel = GPy.kern.Coregionalize(1)
         if kernel is 'Cosine':
@@ -478,6 +549,26 @@ class IEC(object):
             kernel = GPy.kern.sde_RatQuad(1)
         if kernel is 'sde_StdPeriodic':
             kernel = GPy.kern.sde_StdPeriodic(1)
+        if kernel is 'custom1':
+            kernel = GPy.kern.RBF(1)+ GPy.kern.PeriodicMatern52(1)        
+        if kernel is 'custom1a':
+            kernel = GPy.kern.PeriodicMatern52(1, period = 1)        
+        if kernel is 'custom1b':
+            kernel = GPy.kern.PeriodicMatern52(1, period = .1)      
+        if kernel is 'custom1c':
+            kernel = GPy.kern.PeriodicMatern52(1, period = 10)        
+        if kernel is 'custom1d':
+            kernel = GPy.kern.PeriodicMatern52(1, period = 15)       
+        if kernel is 'custom1e':
+            kernel = GPy.kern.PeriodicMatern52(1, period = 20)      
+        if kernel is 'custom1f':
+            kernel = GPy.kern.PeriodicMatern52(1, period = 25)
+        if kernel is 'custom2':
+            kernel = (GPy.kern.PeriodicMatern52(1) + 
+                GPy.kern.PeriodicMatern52(1, period = 10)+
+                GPy.kern.PeriodicMatern52(1, period = 20)+
+                GPy.kern.PeriodicMatern52(1, period = 30))
+        print(kernel)
 
     ## new function to add -- what we get from this is the model. 
         training_data = self.data.tail(training_window)[[cons_col]]
@@ -492,26 +583,20 @@ class IEC(object):
         )
 
         scaler = MinMaxScaler(feature_range=(-1, 1))
-        # X_values= training_df['X'].values.reshape(-1,1)
         X= training_df['X'].values.reshape(-1,1)
-        # X = scaler.fit_transform(X_values)
-
+ 
         X = pd.DataFrame(X)
         Y = pd.DataFrame(training_df['y'])
-
-        # X = normalize_dates(X, col = 'X')
-
-        # kernel = GPy.kern.PeriodicExponential(1)
 
         Xs = (X.fillna(value=0)
                 # .apply(lambda x: x.total_seconds())
                 # .pipe(lambda s: (s - s.mean()) / s.std())
-                .sample(1000)
+        #        .sample(1000)
         )
 
         Ys = (Y.fillna(value=0)
                 .pipe(lambda s: (s - s.mean())/s.std()) #### TODO: fix: is this normalization step correct? 
-                .loc[Xs.index]
+        #        .loc[Xs.index]
                 .values.reshape((-1,1))
         )
 
@@ -520,38 +605,30 @@ class IEC(object):
         m = GPy.models.GPRegression(Xs,Ys,kernel)
         m.optimize(messages=True)
 
-        date_index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window)
-        
-        result = pd.DataFrame(index = date_index.to_pydatetime())
-        means, stds = m._raw_predict(date_index.values.reshape(-1,1))
-        result['pred_means'] = (means * Y.std().values + Y.mean().values)
-        # result['stds'] = stds*Y.mean()
+      
+        index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
+        result = pd.DataFrame(index=index)
+        means, stds = m._raw_predict(index.values.reshape(-1,1))
+        result['pred_means'] = (means*Y.std().values+Y.mean().values)
 
-        baseline_finder_means = self.algorithms["Baseline Finder"]()
-        temp_combination = result['pred_means'] + baseline_finder_means
+        baseline_finder_means = self.algorithms["b3"]()
+
+        temp_combination = result['pred_means'] #+ baseline_finder_means
         recent_baseline = np.nanmean(Y[-recent_baseline_length:-1].values.reshape(-1,1))
-
-        print("recent baseline----------")
-        print(recent_baseline)
         
         interp_range=120
         long_term_ease_method=easeOutQuad
 
         method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
-
         if interp_range > 0:
             temp_combination[:interp_range] = lerp(np.repeat(recent_baseline, interp_range),
                                            temp_combination[:interp_range],
                                            method)
-
         return temp_combination
 
     def predict(self, alg_keys):
-        """ Returns a Pandas Dataframe where the key is the name of the algorithm being used.
-            Using self.algorithms() the function determines predictions of days. """
         index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window)
         result = pd.DataFrame(index=index)
-
         for key in alg_keys:
             r = self.algorithms[key]()
             if (r.shape[1] if r.ndim > 1 else 1) > 1:
@@ -572,6 +649,7 @@ class IEC(object):
                         long_term_ease_method=easeOutQuad):
         training_data = self.data.tail(training_window)[[cons_col]]
 
+
         # observation_length is ALL of the current day (till now) + 4 hours
         observation_length = mins_in_day(self.now) + observation_length_addition
 
@@ -580,7 +658,6 @@ class IEC(object):
                 training_data, observation_length, k, similarity_interval, method=baseline_similarity)
         except NoSimilarMomentsFound:
             # no similar moments were found by our approach.. returning a mean of the last few hours
-            print("No similar moments found.")
             recent_baseline = training_data[-recent_baseline_length:-1].mean()[cons_col]
             baseline = np.repeat(recent_baseline, self.prediction_window)
             baseline[0] = training_data.tail(1)[cons_col]
@@ -685,6 +762,7 @@ class IEC(object):
         except:
             model = sm.tsa.SARIMAX(TrainingDataIntervals, enforce_stationarity=False)
             model_fit = model.fit(disp=0)
+        #
 
         output = model_fit.forecast(int(self.prediction_window / interval))
 
@@ -698,3 +776,179 @@ class IEC(object):
         Predictions[0] = training_data[-1]  # current consumption
 
         return Predictions
+
+
+
+def worker(ie, alg_keys):
+    return ie.predict(alg_keys)
+
+class IECTester:
+    """Performs several tests to the Intelligent Energy Component.
+    """
+    version = 0.1
+
+    def __init__(self, data, prediction_window, testing_range, save_file='save.p'):
+        self.data = data
+        self.prediction_window = prediction_window
+        self.range = testing_range
+        self.save_file = save_file
+
+        self.hash = 0
+
+        self.TestedAlgorithms = set()
+        self.results = dict()
+        if save_file is not None:
+            self.load()
+
+    def load(self):
+        try:
+            with open(self.save_file, "rb") as f:
+                savedata = pickle.load(f)
+                if (savedata['version'] == self.version
+                    and savedata['range'] == self.range
+                    and savedata['hash'] == self.hash
+                    and savedata['PredictionWindow'] == self.prediction_window):
+                    self.TestedAlgorithms = savedata['TestedAlgorithms']
+                    self.results = savedata['results']
+
+        except (IOError, EOFError):
+            pass
+
+    def save(self):
+        savedata = dict()
+        savedata['version'] = self.version
+        savedata['range'] = self.range
+        savedata['hash'] = self.hash
+        savedata['PredictionWindow'] = self.prediction_window
+        savedata['TestedAlgorithms'] = self.TestedAlgorithms
+        savedata['results'] = self.results
+
+        with open(self.save_file, "wb") as f:
+            pickle.dump(savedata, f)
+
+    def run(self, *args, multithread=True, force_processes=None):
+        """Runs the tester and saves the result
+        """
+
+        algorithms_to_test = set(args) - self.TestedAlgorithms
+        if not algorithms_to_test:
+            return
+
+        for key in algorithms_to_test:
+            self.results[key] = np.zeros(
+                [len(self.range), self.prediction_window])
+            self.results[key + " STD"] = np.zeros(
+                [len(self.range), self.prediction_window])
+
+        self.results['GroundTruth'] = np.zeros(
+            [len(self.range), self.prediction_window])
+
+        IECs = [IEC(self.data[:(-offset)]) for offset in self.range]
+
+        if multithread:
+            if force_processes is None:
+                p = Pool(processes=cpu_count() - 2)
+            else:
+                p = Pool(force_processes)
+            func_map = p.imap(
+                partial(worker, alg_keys=algorithms_to_test),
+                IECs)
+        else:
+            func_map = map(
+                partial(worker, alg_keys=algorithms_to_test),
+                IECs)
+        try:
+            with tqdm(total=len(IECs), smoothing=0.0) as pbar:
+                for index, (offset, result) in enumerate(zip(self.range, func_map)):
+
+                    for key in algorithms_to_test:
+                        std_key = key + " STD"
+
+                        self.results[key][index, :] = result[key].as_matrix()
+                        if std_key in result:
+                            self.results[std_key][index, :] = result[std_key].as_matrix()
+
+                    self.results['GroundTruth'][index, :] = self.data[
+                                                            -offset - 1
+                                                            : -offset + self.prediction_window - 1
+                                                            ][cons_col].as_matrix()
+                    pbar.update(1)
+
+            self.TestedAlgorithms.update(algorithms_to_test)
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if multithread:
+                p.terminate()
+                p.join()
+
+    def rmse(self):
+        """For each second in the future find the root mean square prediction error
+        """
+        rmse = dict()
+
+        for key in self.TestedAlgorithms:
+            rmse[key] = [mean_squared_error(
+                self.results['GroundTruth'][:, col],
+                self.results[key][:, col]) ** 0.5 for col in range(self.prediction_window)]
+
+        return rmse
+
+    def simple_prediction(self, offset):
+
+        prediction = dict()
+        for key in self.TestedAlgorithms:
+            prediction[key] = self.results[key][offset, :]
+        prediction['GroundTruth'] = self.results['GroundTruth'][offset, :]
+
+        return prediction
+
+    def average_rmse(self):
+        """Average the RMSE of each algorithms over our runs
+        """
+
+        armse = dict()
+
+        for key in self.TestedAlgorithms:
+            rmse = [mean_squared_error(self.results['GroundTruth'][i, :],
+                                       self.results[key][i, :]
+                                       ) for i in range(self.results[key].shape[0])
+                    ]
+            armse[key] = np.mean(rmse)
+        return armse
+
+    def average_total_error(self):
+        ate = dict()
+
+        for key in self.TestedAlgorithms:
+            total_error = [abs(np.sum(self.results['GroundTruth'][i, :])
+                               - np.sum(self.results[key][i, :])
+                               ) for i in range(self.results[key].shape[0])]
+            ate[key] = np.mean(total_error)
+        return ate
+
+    def similarity_tester(self, offset, method=cosine_similarity):
+        pass
+
+
+def main():
+    dataset_filename = '../dataset-kw.gz'
+    dataset_tz = 'Europe/Zurich'
+
+    data = pd.read_csv(dataset_filename, parse_dates=[0], index_col=0).tz_localize('UTC').tz_convert(dataset_tz)
+
+    prediction_window = 960
+    testing_range = range(prediction_window, prediction_window + 200, 1)
+
+    tester = IECTester(data, prediction_window, testing_range, save_file=None)
+    tester.run('Baseline Finder Hybrid', multithread=False)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+
