@@ -7,8 +7,10 @@ from __future__ import division
 import pickle
 from datetime import timedelta
 import datetime
+from datetime import datetime
 from functools import partial
 from multiprocessing import Pool, cpu_count
+import os.path
 
 import numpy as np
 import GPy
@@ -201,6 +203,60 @@ def med_filt(x, k=201):
         y[-j:, -(i + 1)] = med
     return np.median(y, axis=1)
 
+def kernel_transformer(kernel = "PeriodicMatern52", dim = 1):
+    if kernel is 'PeriodicExponential': 
+        kernel = GPy.kern.PeriodicExponential(dim)
+    if kernel is 'RBF':
+        kernel = GPy.kern.RBF(dim)
+    if kernel is 'Coregionalize':
+        kernel = GPy.kern.Coregionalize(dim)
+    if kernel is "Periodic":
+        kernel = GPy.kern.Periodic(dim)
+    if kernel is 'Cosine':
+        kernel = GPy.kern.Cosine(dim)
+    if kernel is 'DEtime':
+        kernel = GPy.kern.DEtime(dim)
+    if kernel is 'DiffGenomeKern':
+        kernel = GPy.kern.DiffGenomeKern(dim)
+    if kernel is 'Hierarchical':
+        kernel = GPy.kern.Hierarchical(dim)
+    if kernel is 'PeriodicExponential':
+        kernel = GPy.kern.PeriodicExponential(dim)
+    if kernel is 'PeriodicMatern32':
+        kernel = GPy.kern.PeriodicMatern32(dim)
+    if kernel is 'PeriodicMatern52':
+        kernel = GPy.kern.PeriodicMatern52(dim)
+    if kernel is 'Poly':
+        kernel = GPy.kern.Poly(dim)
+    if kernel is 'StdPeriodic':
+        kernel = GPy.kern.StdPeriodic(dim)
+    if kernel is 'sde_RatQuad':
+        kernel = GPy.kern.sde_RatQuad(dim)
+    if kernel is 'sde_StdPeriodic':
+        kernel = GPy.kern.sde_StdPeriodic(dim)
+    if kernel is 'custom1':
+        kernel = GPy.kern.RBF(dim)+ GPy.kern.PeriodicMatern52(dim)        
+    if kernel is 'custom1a':
+        kernel = GPy.kern.PeriodicMatern52(dim, period = 1)        
+    if kernel is 'custom1b':
+        kernel = GPy.kern.PeriodicMatern52(dim, period = .1)      
+    if kernel is 'custom1c':
+        kernel = GPy.kern.PeriodicMatern52(dim, period = 10)        
+    if kernel is 'custom1d':
+        kernel = GPy.kern.PeriodicMatern52(dim, period = 15)       
+    if kernel is 'custom1e':
+        kernel = GPy.kern.PeriodicMatern52(dim, period = 20)      
+    if kernel is 'custom1f':
+        kernel = GPy.kern.PeriodicMatern52(dim, period = 25)
+    if kernel is 'custom2':
+        kernel = (GPy.kern.PeriodicMatern52(dim) + 
+            GPy.kern.PeriodicMatern52(dim, period = 10)+
+            GPy.kern.PeriodicMatern52(dim, period = 20)+
+            GPy.kern.PeriodicMatern52(dim, period = 30))
+    print(kernel)
+
+    return kernel
+
 def gauss_filt(x, k=201):
     """Apply a length-k gaussian filter to a 1D array x.
     Boundaries are extended by repeating endpoints.
@@ -377,18 +433,6 @@ class IEC(object):
                           short_interp_range=25, half_window=80, similarity_interval=5, recent_baseline_length=200,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "best4": partial(self.baseline_finder, training_window=1440 * 60, k=4, long_interp_range=180,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=180,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeInOutCirc),
-            "best12": partial(self.baseline_finder, training_window=1440 * 60, k=4, long_interp_range=60,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=60,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeInOutCirc),
-            "best24": partial(self.baseline_finder, training_window=1440 * 60, k=4, long_interp_range=30,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=30,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeInOutCirc),
             "GP PerExp": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel="PeriodicExponential", 
                 recent_baseline_length=10),
             "GP PerMatern32": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel="PeriodicMatern32", 
@@ -421,36 +465,13 @@ class IEC(object):
                 recent_baseline_length=10),
             "GP Custom2": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom2", 
                 recent_baseline_length=10),
-            "nn lstm": partial(self.rnn_lstm, training_window = 1440*60, k=7, recent_baseline_length=5)
-
+            "nn lstm": partial(self.rnn_lstm, training_window = 1440*60, k=7, recent_baseline_length=5),
+            "residGP1": partial(self.GP_resids, training_window=1440*60, k=5, 
+                kernel="RBF", num_samples = 10000), 
+            "residGP2": partial(self.GP_resids, training_window=1440*60, k=5, 
+                kernel="Cosine", num_samples=10000),
         }
-        self.grid_search()
 
-        def grid_search(self):
-            algo_name = ""
-            i = 0
-            # adjust k parameter range
-            for k in range(1, 10):
-                algo_name_k = "b k=" + str(k) + " "
-                # adjust baseline length range
-                for recent_baseline_length in range(200, 350, 50):
-                    algo_name_recent = "recent_baseline_length=" + str(recent_baseline_length) + " "
-                    # Short-term easing functions
-                    for short_term_ease_method in [easeOutSine, easeInOutSine, easeInOutQuint]:
-                        algo_name_short = "short_term_ease_method=" + short_term_ease_method.__name__ + " "
-                        # Long-term easing functions
-                        for long_term_ease_method in [easeOutCirc, easeInOutCirc, easeInOutExpo]:
-                            algo_name_long = "long_term_ease_method=" + long_term_ease_method.__name__ # + " "
-                            algo_name = algo_name_k + algo_name_recent + algo_name_short + algo_name_long
-                            self.algorithms[algo_name] = partial(self.baseline_finder, training_window=1440 * 60,
-                                                                                       k=k, long_interp_range=200,
-                                                                                       short_interp_range=25,
-                                                                                       half_window=80,
-                                                                                       similarity_interval=5,
-                                                                                       recent_baseline_length=recent_baseline_length,
-                                                                                       observation_length_addition=240,
-                                                                                       short_term_ease_method=short_term_ease_method,
-                                                                                       long_term_ease_method=long_term_ease_method)
 
     def rnn_lstm(self, training_window=1440 * 60, k=7, recent_baseline_length=5):
 
@@ -521,55 +542,8 @@ class IEC(object):
 
     def gaussian_process_regression(self, training_window=1440 * 60, k=7, kernel='PeriodicExponential',recent_baseline_length=5):
 
-        if kernel is 'PeriodicExponential': 
-            kernel = GPy.kern.PeriodicExponential(1)
-        if kernel is 'RBF':
-            kernel = GPy.kern.RBF(1)
-        if kernel is 'Coregionalize':
-            kernel = GPy.kern.Coregionalize(1)
-        if kernel is 'Cosine':
-            kernel = GPy.kern.Cosine(1)
-        if kernel is 'DEtime':
-            kernel = GPy.kern.DEtime(1)
-        if kernel is 'DiffGenomeKern':
-            kernel = GPy.kern.DiffGenomeKern(1)
-        if kernel is 'Hierarchical':
-            kernel = GPy.kern.Hierarchical(1)
-        if kernel is 'PeriodicExponential':
-            kernel = GPy.kern.PeriodicExponential(1)
-        if kernel is 'PeriodicMatern32':
-            kernel = GPy.kern.PeriodicMatern32(1)
-        if kernel is 'PeriodicMatern52':
-            kernel = GPy.kern.PeriodicMatern52(1)
-        if kernel is 'Poly':
-            kernel = GPy.kern.Poly(1)
-        if kernel is 'StdPeriodic':
-            kernel = GPy.kern.StdPeriodic(1)
-        if kernel is 'sde_RatQuad':
-            kernel = GPy.kern.sde_RatQuad(1)
-        if kernel is 'sde_StdPeriodic':
-            kernel = GPy.kern.sde_StdPeriodic(1)
-        if kernel is 'custom1':
-            kernel = GPy.kern.RBF(1)+ GPy.kern.PeriodicMatern52(1)        
-        if kernel is 'custom1a':
-            kernel = GPy.kern.PeriodicMatern52(1, period = 1)        
-        if kernel is 'custom1b':
-            kernel = GPy.kern.PeriodicMatern52(1, period = .1)      
-        if kernel is 'custom1c':
-            kernel = GPy.kern.PeriodicMatern52(1, period = 10)        
-        if kernel is 'custom1d':
-            kernel = GPy.kern.PeriodicMatern52(1, period = 15)       
-        if kernel is 'custom1e':
-            kernel = GPy.kern.PeriodicMatern52(1, period = 20)      
-        if kernel is 'custom1f':
-            kernel = GPy.kern.PeriodicMatern52(1, period = 25)
-        if kernel is 'custom2':
-            kernel = (GPy.kern.PeriodicMatern52(1) + 
-                GPy.kern.PeriodicMatern52(1, period = 10)+
-                GPy.kern.PeriodicMatern52(1, period = 20)+
-                GPy.kern.PeriodicMatern52(1, period = 30))
-        print(kernel)
-
+        kernel=kernel_transformer(kernel, dim = 1)
+        
     ## new function to add -- what we get from this is the model. 
         training_data = self.data.tail(training_window)[[cons_col]]
 
@@ -626,17 +600,112 @@ class IEC(object):
                                            method)
         return temp_combination
 
+    def GP_resids(self, training_window=1440 * 60, k=7, kernel='PeriodicExponential',
+        recent_baseline_length=5, num_samples = 2000, GP_file = False, trained_GP_file = ""):
+
+        kernel_name = kernel
+        kernel=kernel_transformer(kernel_name,dim = 2)
+
+        training_data = pd.read_csv("resids_baseline.csv")
+
+        # observation_length is ALL of the current day (till now) + 4 hours
+        observation_length = mins_in_day(self.now) + 4 * 60
+
+        # make MinMaxScalers for the dataset
+        scaler_resids = MinMaxScaler(feature_range=(-1, 1))
+        scaler_baseline = MinMaxScaler(feature_range=(-1, 1))
+        scaler_time = MinMaxScaler(feature_range=(-1, 1))
+
+
+        X= training_data[['time', "b_predictor"]].sample(num_samples)
+        Y = scaler_resids.fit_transform(training_data[["resids"]].loc[X.index])
+
+        X = X.fillna(value=0)
+        X["b_predictor"]= scaler_baseline.fit_transform(X["b_predictor"].values.reshape(-1,1))
+        X = X.iloc[1:]
+
+        X["time"] = [i.replace("-07:00","") for i in X["time"]]
+        X["time"] = [datetime.strptime(i, '%Y-%m-%d %H:%M:%S') for i in X["time"]]
+        X["time"] = scaler_time.fit_transform(X["time"].values.reshape(-1,1))
+
+        X = X.values.reshape(-1,2)
+        Y = Y.reshape(-1,1)
+        Y = Y[1:] 
+
+        if not GP_file:
+            trained_GP_file = "GP_"+kernel_name + str(num_samples) +".pkl"
+
+
+        if os.path.isfile(trained_GP_file):
+            GP_model_pkl = open(trained_GP_file, 'rb')
+            m = pickle.load(GP_model_pkl)
+            print "Loaded GP model :: ", m
+        
+        else:
+
+            # train the model 
+
+            m = GPy.models.GPRegression(X,Y,kernel)
+            m.optimize(messages=True)
+
+            # save it in a pickle 
+            GP_pkl = open(trained_GP_file, 'wb')
+            pickle.dump(m, GP_pkl)
+            GP_pkl.close()
+
+            
+        ## predicting based on the GP 
+
+        # setting up input data  
+
+        index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
+        result = (pd.DataFrame(scaler_time
+            .transform(index.values.reshape(-1,1)))
+            .rename(columns = {0:"time"}))        
+        result["baseline_finder_preds"]= (scaler_baseline
+            .transform(self.algorithms["b3"]()
+                    .reshape(-1,1)))
+        
+        # predicting
+        means, stds = m._raw_predict(result.values.reshape(-1,2))
+
+        result["baseline_finder_preds"]= (scaler_baseline
+            .inverse_transform(
+                    result["baseline_finder_preds"]
+                    .values.reshape(-1,1)
+                    )
+            )
+
+        result['pred_means'] = scaler_resids.inverse_transform(means)
+
+        temp_combination = result['pred_means'] + result["baseline_finder_preds"]
+
+        data_temp = training_data["b_predictor"] + training_data["resids"]
+        recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
+        
+        interp_range=120
+        long_term_ease_method=easeOutQuad
+
+        method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
+        if interp_range > 0:
+            temp_combination[:interp_range] = lerp(np.repeat(recent_baseline, interp_range),
+                                           temp_combination[:interp_range],
+                                           method)
+
+        return temp_combination.values
+
+
     def predict(self, alg_keys):
         index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window)
-        result = pd.DataFrame(index=index)
+        result_pred = pd.DataFrame(index=index)
         for key in alg_keys:
-            r = self.algorithms[key]()
-            if (r.shape[1] if r.ndim > 1 else 1) > 1:
-                result[key] = r[:, 0]
-                result[key + ' STD'] = r[:, 1]
+            pred = self.algorithms[key]()
+            if (pred.shape[1] if pred.ndim > 1 else 1) > 1:
+                result_pred[key] = pred[:, 0]
+                result_pred[key + ' STD'] = pred[:, 1]
             else:
-                result[key] = r
-        return result
+                result_pred[key] = pred
+        return result_pred
 
     def simple_mean(self, training_window=24 * 60):
         training_data = self.data.tail(training_window)
@@ -826,10 +895,10 @@ class IECTester:
         with open(self.save_file, "wb") as f:
             pickle.dump(savedata, f)
 
-    def run(self, *args, multithread=True, force_processes=None):
+    def run(self, multithread=True, force_processes=None, *args):
         """Runs the tester and saves the result
         """
-
+        
         algorithms_to_test = set(args) - self.TestedAlgorithms
         if not algorithms_to_test:
             return
