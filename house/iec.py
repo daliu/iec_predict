@@ -472,6 +472,33 @@ class IEC(object):
                 kernel="Cosine", num_samples=10000),
         }
 
+        self.grid_search()
+
+    def grid_search(self):
+        algo_name = ""
+        i = 0
+        # adjust k parameter range
+        for k in range(1, 10):
+            algo_name_k = "b k=" + str(k) + " "
+            # adjust baseline length range
+            for recent_baseline_length in range(200, 350, 50):
+                algo_name_recent = "recent_baseline_length=" + str(recent_baseline_length) + " "
+                # Short-term easing functions
+                for short_term_ease_method in [easeOutSine, easeInOutSine, easeInOutQuint]:
+                    algo_name_short = "short_term_ease_method=" + short_term_ease_method.__name__ + " "
+                    # Long-term easing functions
+                    for long_term_ease_method in [easeOutCirc, easeInOutCirc, easeInOutExpo]:
+                        algo_name_long = "long_term_ease_method=" + long_term_ease_method.__name__ # + " "
+                        algo_name = algo_name_k + algo_name_recent + algo_name_short + algo_name_long
+                        self.algorithms[algo_name] = partial(self.baseline_finder, training_window=1440 * 60,
+                                                                                   k=k, long_interp_range=200,
+                                                                                   short_interp_range=25,
+                                                                                   half_window=80,
+                                                                                   similarity_interval=5,
+                                                                                   recent_baseline_length=recent_baseline_length,
+                                                                                   observation_length_addition=240,
+                                                                                   short_term_ease_method=short_term_ease_method,
+                                                                                   long_term_ease_method=long_term_ease_method)
 
     def rnn_lstm(self, training_window=1440 * 60, k=7, recent_baseline_length=5):
 
@@ -519,8 +546,8 @@ class IEC(object):
         # create and fit the LSTM network
         batch_size = 1
         model = Sequential()
-        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
-        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
+        # model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
+        # model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
         model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True))
         model.add(Dense(1))
         model.compile(loss='mean_squared_error', optimizer='adam')
@@ -846,8 +873,6 @@ class IEC(object):
 
         return Predictions
 
-
-
 def worker(ie, alg_keys):
     return ie.predict(alg_keys)
 
@@ -896,6 +921,7 @@ class IECTester:
             pickle.dump(savedata, f)
 
     def run(self, multithread=True, force_processes=None, *args):
+
         """Runs the tester and saves the result
         """
         
