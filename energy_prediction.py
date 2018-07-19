@@ -6,12 +6,7 @@ import datetime
 import pytz
 
 from datetime import timedelta
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
-# Dave needs this
-
 
 import numpy as np
 import pandas as pd
@@ -29,7 +24,7 @@ import pdb
 
 now = datetime.utcnow().replace(tzinfo=pytz.timezone("UTC")).astimezone(
     tz=pytz.timezone("America/Los_Angeles"))
-print(now)
+print now
 end = now.strftime('%Y-%m-%d %H:%M:%S %Z')
 start = (now - timedelta(days = 20)).strftime('%Y-%m-%d %H:%M:%S %Z') 
 WINDOW = '1min'
@@ -125,7 +120,7 @@ resp = mdal.do_query(lighting_meter_query_mdal, timeout=120)
 lighting_df = resp['df']
 
 
-def rmse(algorithm = "GP PerMatern52", future_window = 12 * 60, num_cuts = 12):
+def feed_forward_rmse(algorithm = "GP PerMatern52", future_window = 12 * 60, num_cuts = 12):
     all_indexes = map(int, range(0, future_window, int(future_window/num_cuts)))
     RMSE = np.array([])
 
@@ -147,8 +142,39 @@ def rmse(algorithm = "GP PerMatern52", future_window = 12 * 60, num_cuts = 12):
         A = A[~np.isnan(A)]
         RMSE = np.append(RMSE, np.sqrt(np.mean(A)**2))
 
-    print(algorithm, RMSE[0])
-    return RMSE[0]
+    print(algorithm, np.mean(RMSE))
+    return np.mean(RMSE)
+
+def predictive_horizon_rmse(algorithm = "Baseline Finder", future_window = 12 * 60, num_cuts = 6):
+    all_indexes = map(int, range(0, future_window, int(future_window/num_cuts)))
+    RMSE = np.array([])
+    X_train = 0
+    
+    yesterday = now - timedelta(hours = 12)
+ 
+    for train_index in all_indexes:
+        
+        X_test = train_index + int(future_window / num_cuts)
+        if future_window == X_test:
+            y_test = meterdata[["House Consumption"]][ -future_window + X_train: ]
+        else:    
+            y_test = meterdata[["House Consumption"]][ -future_window + X_train : -future_window + X_test]
+        
+        # print(X_train, X_test, y_test.shape)
+
+    
+        model_RMSE = IEC(meterdata[:yesterday].fillna(value=0), prediction_window = X_test)
+        prediction_temp = model_RMSE.predict([algorithm]).fillna(value = 0)
+
+        A = prediction_temp[[algorithm]][X_train:X_test].values - y_test[["House Consumption"]].values
+        A = A[~np.isnan(A)]
+        
+        RMSE = np.append(RMSE, np.sqrt(np.sum(np.absolute(A))**2))
+
+
+    final = pd.DataFrame(all_indexes).rename(columns = {0:"index"})
+    final["RMSE"] = RMSE
+    return final 
 
 # We are using a similarity based approach to predict. This means, that we build a similarity 
 # measure to see how similar past days were to the day we are currently experiencing and taking
@@ -193,42 +219,54 @@ yesterday = now - timedelta(hours = 12) # ?
 # Prediction happening here and should be looked at.
 #print(meterdata[:yesterday].fillna(value=0))
 
-
 future_window = 12 * 60
 model = IEC(meterdata[:yesterday].fillna(value = 0), prediction_window = future_window)
-# algo_keys = ["GP PerExp", "GP PerMatern32", "GP PerMatern52", "ARIMA", "Baseline Finder", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "best4", "best12", "best24"]
+#algo_keys = ["GP PerExp", "GP PerMatern32", "GP PerMatern52", "ARIMA", "Baseline Finder"]#, "b1", "b2", "b3", "b4", "b5", "b6", "b7", "best4", "best12", "best24"]
 # algo_keys = model.algorithms.keys()
-# algo_keys = ["best4", "best12", "best24"]
-algo_keys = ["nn lstm"]
+algo_keys = ["Baseline Finder", "b3","b4","residGP1"]
 
 min_rmse = 1000000
 best_algo_name = ""
+
 for algo_name in algo_keys:
+    print(algo_name)
     # if algo_name[0] is not "b":
     #     continue
-    print(algo_name)
-    if "best" in algo_name:
-        new_rmse = rmse(algo_name, future_window, int(algo_name.replace("best","")))
-    else:
-        new_rmse = rmse(algo_name, future_window, 2)
-    if new_rmse < min_rmse:
-        min_rmse = new_rmse
-        best_algo_name = algo_name
+    # if "best" in algo_name:
+    #     new_rmse = rmse(algo_name, future_window, int(algo_name.replace("best","")))
+    # else:
+    #     new_rmse = rmse(algo_name, future_window, 2)
+    # if new_rmse < min_rmse:
+    #     min_rmse = new_rmse
+    #     best_algo_name = algo_name
 
-# print("--------------------")
-# print("best algo:" + best_algo_name)
-# print("rmse:" + str(new_rmse))
     prediction = model.predict([algo_name])
 
-    index = np.arange(future_window)
-    plt.title(algo_name)
-    plt.plot(index, prediction[[algo_name]], label="Energy Prediction")
-    plt.plot(index, meterdata[["House Consumption"]][-future_window:], label="Ground Truth")
-    plt.xlabel('Predictive horizon (Minutes)')
-    plt.ylabel(r'KWh')
-    plt.legend()
-    plt.savefig(algo_name + '.png', bbox_inches='tight')
-    plt.show()
+ #   pred_RMSE = feed_forward_rmse(algorithm = algo_name, future_window= 12*60, num_cuts = 12)
+    
+    predictive_horizon = True
+
+    if predictive_horizon:
+        pred_RMSE = predictive_horizon_rmse(algorithm = algo_name, future_window= 12*60, num_cuts = 6)
+        plt.plot(pred_RMSE[["index"]], pred_RMSE[["RMSE"]], label = algo_name)
+        plt.xlabel('Predictive horizon (Minutes)')
+        plt.ylabel(r'KWh')
+        plt.legend(loc = 'upper left')
+        plt.savefig(algo_name + '.png', bbox_inches='tight')
+    
+    else: 
+        index = np.arange(future_window)
+        plt.title(algo_name)
+        plt.plot(index, prediction[[algo_name]], label="Energy Prediction")
+        plt.plot(index, meterdata[["House Consumption"]][-future_window:], label="Ground Truth")
+        plt.xlabel('Predictive horizon (Minutes)')
+        plt.ylabel(r'KWh')
+        plt.legend()
+        plt.savefig(algo_name + '.png', bbox_inches='tight')
+        plt.show()
+    
+plt.show()
+    
+
 
 print("Minimum RMSE: " + best_algo_name)
-
