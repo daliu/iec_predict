@@ -6,7 +6,12 @@ import datetime
 import pytz
 
 from datetime import timedelta
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+# Dave needs this
+
 
 import numpy as np
 import pandas as pd
@@ -199,8 +204,8 @@ algo_keys = ["nn lstm"]
 min_rmse = 1000000
 best_algo_name = ""
 for algo_name in algo_keys:
-    if algo_name[0] is not "b":
-        continue
+    # if algo_name[0] is not "b":
+    #     continue
     print(algo_name)
     if "best" in algo_name:
         new_rmse = rmse(algo_name, future_window, int(algo_name.replace("best","")))
@@ -224,6 +229,6 @@ for algo_name in algo_keys:
     plt.legend()
     plt.savefig(algo_name + '.png', bbox_inches='tight')
     plt.show()
-    
+
 print("Minimum RMSE: " + best_algo_name)
 
