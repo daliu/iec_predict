@@ -6,7 +6,7 @@ from __future__ import division
 
 import pickle
 from datetime import timedelta
-import datetime
+import datetime as dt
 from datetime import datetime
 from functools import partial
 from multiprocessing import Pool, cpu_count
@@ -30,6 +30,7 @@ import math
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
+from keras.models import model_from_json
 
 import matplotlib.pyplot as plt
 
@@ -101,6 +102,20 @@ def timeseries_to_supervised(data, lag=1):
     df.fillna(0, inplace=True)
     return df
 
+def is_weekday(day):
+    if day in range(0,5):
+        return 1
+    else:
+        return 0
+
+
+def is_workday(hour):
+    if hour in range(8,18):
+        return 1
+    else:
+        return 0
+
+
 
 def find_similar_days(training_data, observation_length, k, interval, method=cosine_similarity):
     now = training_data.index[-1]
@@ -166,6 +181,26 @@ def difference(dataset, interval=1):
     return Series(diff)
 
 
+#get season from timestamp
+
+def get_season(t):
+
+    # the input must be a datetime
+    if isinstance(t, datetime):
+        t = t.to_datetime()
+        Y = t.year # dummy leap year to allow input X-02-29 (leap day)
+
+    if t.month < 4:
+        season = "winter"
+    elif t.month >3 and t.month<7:
+        season = "spring"
+    elif t.month > 6 and t.month < 10:
+        season = "summer"
+    else: 
+        season = "fall"
+
+    return season
+
 
 # invert differenced value
 def inverse_difference(history, yhat, interval=1):
@@ -207,13 +242,16 @@ def kernel_transformer(kernel = "PeriodicMatern52", dim = 1):
     if kernel is 'PeriodicExponential': 
         kernel = GPy.kern.PeriodicExponential(dim)
     if kernel is 'RBF':
-        kernel = GPy.kern.RBF(dim)
+        kernel = GPy.kern.RBF(dim) ## decrease starting length -> put some restrictions on optimization 
+        ## bounds on optimization 
     if kernel is 'Coregionalize':
         kernel = GPy.kern.Coregionalize(dim)
     if kernel is "Periodic":
         kernel = GPy.kern.Periodic(dim)
     if kernel is 'Cosine':
-        kernel = GPy.kern.Cosine(dim)
+        kernel = GPy.kern.Cosine(dim)    
+    if kernel is 'CosineCustom':
+        kernel = GPy.kern.Cosine(dim, lengthscale = 10)
     if kernel is 'DEtime':
         kernel = GPy.kern.DEtime(dim)
     if kernel is 'DiffGenomeKern':
@@ -229,7 +267,11 @@ def kernel_transformer(kernel = "PeriodicMatern52", dim = 1):
     if kernel is 'Poly':
         kernel = GPy.kern.Poly(dim)
     if kernel is 'StdPeriodic':
-        kernel = GPy.kern.StdPeriodic(dim)
+        kernel = GPy.kern.StdPeriodic(dim)    
+    if kernel is 'StdPeriodicSum':
+        kernel = (GPy.kern.StdPeriodic(dim)+
+            GPy.kern.StdPeriodic(dim, lengthscale= 10)+
+            GPy.kern.StdPeriodic(dim, lengthscale=100))
     if kernel is 'sde_RatQuad':
         kernel = GPy.kern.sde_RatQuad(dim)
     if kernel is 'sde_StdPeriodic':
@@ -399,38 +441,38 @@ class IEC(object):
             "Simple Mean": self.simple_mean,
             "Usage Zone Finder": self.usage_zone_finder,
             "ARIMA": self.ARIMAforecast,
-            "Baseline Finder": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
-                                       short_interp_range=25, half_window=70, similarity_interval=5,
+            "Baseline Finder": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=50,
+                                       short_interp_range=25, half_window=50, similarity_interval=5,
                                        recent_baseline_length=250,
                                        observation_length_addition=240, short_term_ease_method=easeOutSine,
                                        long_term_ease_method=easeOutCirc),
             "STLF": self.baseline_finder_dumb,
-            "b1": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=250,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeOutCirc),
-            "b2": partial(self.baseline_finder, training_window=1440 * 60, k=3, long_interp_range=250,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=300,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeOutCirc),
-            "b3": partial(self.baseline_finder, training_window=1440 * 60, k=6, long_interp_range=250,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=200,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeOutCirc),
-            "b4": partial(self.baseline_finder, training_window=1440 * 60, k=12, long_interp_range=250,
-                          short_interp_range=25, half_window=70, similarity_interval=5, recent_baseline_length=200,
-                          observation_length_addition=240, short_term_ease_method=easeOutSine,
-                          long_term_ease_method=easeOutCirc),
-            "b5": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
+            "b1": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=50,
                           short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=250,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b6": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
+            "b2": partial(self.baseline_finder, training_window=1440 * 60, k=3, long_interp_range=50,
+                          short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=300,
+                          observation_length_addition=240, short_term_ease_method=easeOutSine,
+                          long_term_ease_method=easeOutCirc),
+            "b3": partial(self.baseline_finder, training_window=1440 * 60, k=6, long_interp_range=50,
+                          short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=200,
+                          observation_length_addition=240, short_term_ease_method=easeOutSine,
+                          long_term_ease_method=easeOutCirc),
+            "b4": partial(self.baseline_finder, training_window=1440 * 60, k=12, long_interp_range=50,
+                          short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=200,
+                          observation_length_addition=240, short_term_ease_method=easeOutSine,
+                          long_term_ease_method=easeOutCirc),
+            "b5": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=50,
+                          short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=250,
+                          observation_length_addition=240, short_term_ease_method=easeOutSine,
+                          long_term_ease_method=easeOutCirc),
+            "b6": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=50,
                           short_interp_range=25, half_window=60, similarity_interval=5, recent_baseline_length=300,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
-            "b7": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=250,
-                          short_interp_range=25, half_window=80, similarity_interval=5, recent_baseline_length=200,
+            "b7": partial(self.baseline_finder, training_window=1440 * 60, k=9, long_interp_range=50,
+                          short_interp_range=25, half_window=50, similarity_interval=5, recent_baseline_length=200,
                           observation_length_addition=240, short_term_ease_method=easeOutSine,
                           long_term_ease_method=easeOutCirc),
             "GP PerExp": partial(self.gaussian_process_regression, training_window=1440*60, k=7, kernel="PeriodicExponential", 
@@ -466,10 +508,18 @@ class IEC(object):
             "GP Custom2": partial(self.gaussian_process_regression, training_window=1440*60, k=5, kernel="custom2", 
                 recent_baseline_length=10),
             "nn lstm": partial(self.rnn_lstm, training_window = 1440*60, k=7, recent_baseline_length=5),
-            "residGP1": partial(self.GP_resids, training_window=1440*60, k=5, 
-                kernel="RBF", num_samples = 10000), 
+            "residGP1": partial(self.GP_resids, training_window=1440*60, k=5,
+                kernel="RBF", num_samples = 1600), # shorter than an hour ahead, shorter than predictive horizon 
             "residGP2": partial(self.GP_resids, training_window=1440*60, k=5, 
-                kernel="Cosine", num_samples=10000),
+                kernel="CosineCustom", num_samples=3000),            
+            "residGP3": partial(self.GP_resids, training_window=1440*60, k=5, 
+                kernel="StdPeriodic", num_samples=2000),            
+            "residGP4": partial(self.GP_resids, training_window=1440*60, k=5, 
+                kernel="StdPeriodicSum", num_samples=2000),
+            "residRNN": partial(self.RNN_resids, training_window= 1440*60, k=7, recent_baseline_length=5, 
+                num_samples = 2000, nn_file = False, trained_nn_file = "", lag = 1),
+            "residRNN_nolag": partial(self.RNN_resids_no_lag, training_window= 1440*60, k=7, recent_baseline_length=5, 
+                num_samples = 2000, nn_file = False, trained_nn_file = "")
         }
 
         self.grid_search()
@@ -498,9 +548,12 @@ class IEC(object):
                                                                                    recent_baseline_length=recent_baseline_length,
                                                                                    observation_length_addition=240,
                                                                                    short_term_ease_method=short_term_ease_method,
+                                 
                                                                                    long_term_ease_method=long_term_ease_method)
 
-    def rnn_lstm(self, training_window=1440 * 60, k=7, recent_baseline_length=5):
+
+
+    def rnn_lstm(self, training_window=1440 * 60, k=7, recent_baseline_length=60):
 
         training_data = self.data.tail(training_window)[[cons_col]]
         # observation_length is ALL of the current day (till now) + 4 hours
@@ -546,8 +599,8 @@ class IEC(object):
         # create and fit the LSTM network
         batch_size = 1
         model = Sequential()
-        # model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
-        # model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
+        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
+        model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True, return_sequences=True))
         model.add(LSTM(4, batch_input_shape=(batch_size, 1, lag), stateful = True))
         model.add(Dense(1))
         model.compile(loss='mean_squared_error', optimizer='adam')
@@ -596,7 +649,7 @@ class IEC(object):
         )
 
         Ys = (Y.fillna(value=0)
-                .pipe(lambda s: (s - s.mean())/s.std()) #### TODO: fix: is this normalization step correct? 
+                .pipe(lambda s: (s - s.mean())/s.std()) 
         #        .loc[Xs.index]
                 .values.reshape((-1,1))
         )
@@ -627,41 +680,56 @@ class IEC(object):
                                            method)
         return temp_combination
 
+
+
     def GP_resids(self, training_window=1440 * 60, k=7, kernel='PeriodicExponential',
-        recent_baseline_length=5, num_samples = 2000, GP_file = False, trained_GP_file = ""):
+        recent_baseline_length=60, num_samples = 3000, GP_file = False, trained_GP_file = ""):
+
+        dim = 2
 
         kernel_name = kernel
-        kernel=kernel_transformer(kernel_name,dim = 2)
+        kernel=kernel_transformer(kernel_name,dim = dim)
 
-        training_data = pd.read_csv("resids_baseline.csv")
+        # TODO: make the model update every 2 weeks. (Someone has to help here -- ask Dave.)
 
-        # observation_length is ALL of the current day (till now) + 4 hours
-        observation_length = mins_in_day(self.now) + 4 * 60
+        training_data = pd.read_csv("resids_baseline_year.csv") 
+
 
         # make MinMaxScalers for the dataset
-        scaler_resids = MinMaxScaler(feature_range=(-1, 1))
-        scaler_baseline = MinMaxScaler(feature_range=(-1, 1))
-        scaler_time = MinMaxScaler(feature_range=(-1, 1))
-
+        scaler_resids = MinMaxScaler(feature_range=(0, 1))
+        scaler_baseline = MinMaxScaler(feature_range=(0, 1))
+        scaler_time = MinMaxScaler(feature_range=(0, 1))
 
         X= training_data[['time', "b_predictor"]].sample(num_samples)
         Y = scaler_resids.fit_transform(training_data[["resids"]].loc[X.index])
-
-        X = X.fillna(value=0)
         X["b_predictor"]= scaler_baseline.fit_transform(X["b_predictor"].values.reshape(-1,1))
         X = X.iloc[1:]
 
         X["time"] = [i.replace("-07:00","") for i in X["time"]]
+        X["time"] = [i.replace("-08:00","") for i in X["time"]]
         X["time"] = [datetime.strptime(i, '%Y-%m-%d %H:%M:%S') for i in X["time"]]
+
+
+        seasons = [get_season(i) for i in X["time"]]
+
+        # X["is_fall"]  = [int(i == "fall")*.2 for i in seasons]
+        # X["is_spring"] = [int(i == "spring")*.2 for i in seasons]
+        # X["is_summer"] = [int(i == "summer")*.2 for i in seasons]
+        # X["is_winter"] = [int(i == "winter")*.2 for i in seasons]
+
+        # days = [i.weekday() for i in X["time"]]
+        # X["weekday"] = [is_weekday(i)*.2 for i in days]
+
+
+        # X["is_workhour"] = [(is_workday(i.hour) and is_weekday(i.weekday()))*.2 for i in X["time"]]
         X["time"] = scaler_time.fit_transform(X["time"].values.reshape(-1,1))
 
-        X = X.values.reshape(-1,2)
+        X = X.values.reshape(-1,dim)
         Y = Y.reshape(-1,1)
         Y = Y[1:] 
 
         if not GP_file:
             trained_GP_file = "GP_"+kernel_name + str(num_samples) +".pkl"
-
 
         if os.path.isfile(trained_GP_file):
             GP_model_pkl = open(trained_GP_file, 'rb')
@@ -670,7 +738,7 @@ class IEC(object):
         
         else:
 
-            # train the model 
+            # train the model --- 
 
             m = GPy.models.GPRegression(X,Y,kernel)
             m.optimize(messages=True)
@@ -686,15 +754,29 @@ class IEC(object):
         # setting up input data  
 
         index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
-        result = (pd.DataFrame(scaler_time
-            .transform(index.values.reshape(-1,1)))
-            .rename(columns = {0:"time"}))        
+        
+        result = (pd.DataFrame(index)
+            .rename(columns = {0:"time"})) 
+
         result["baseline_finder_preds"]= (scaler_baseline
-            .transform(self.algorithms["b3"]()
+            .transform(self.algorithms["Baseline Finder"]()
                     .reshape(-1,1)))
         
+
+        # seasons = [get_season(i) for i in result["time"]]
+        # result["is_fall"]  = [int(i == "fall")*.2 for i in seasons]
+        # result["is_spring"] = [int(i == "spring")*.2 for i in seasons]
+        # result["is_summer"] = [int(i == "summer")*.2 for i in seasons]
+        # result["is_winter"] = [int(i == "winter")*.2 for i in seasons]
+
+        # days = [i.weekday() for i in result["time"]]
+        # result["weekday"] = [is_weekday(i)*.2 for i in days]
+        # result["is_workday"]= [(is_workday(i.hour) and is_weekday(i.weekday()))*.2 for i in result["time"]]
+
+        result["time"]=scaler_time.transform(result["time"].values.reshape(-1,1))
+
         # predicting
-        means, stds = m._raw_predict(result.values.reshape(-1,2))
+        means, stds = m._raw_predict(result.values.reshape(-1,dim))
 
         result["baseline_finder_preds"]= (scaler_baseline
             .inverse_transform(
@@ -703,9 +785,146 @@ class IEC(object):
                     )
             )
 
+
         result['pred_means'] = scaler_resids.inverse_transform(means)
 
         temp_combination = result['pred_means'] + result["baseline_finder_preds"]
+
+        data_temp = training_data["b_predictor"] + training_data["resids"]
+        recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
+        current_consumption = training_data.tail(1)[cons_col]
+        
+        # TODO: the smoothing should be done using the GP 
+        # how does a GP prediction do more upfront then towards the end of the data? 
+
+        interp_range=120
+        long_term_ease_method=easeOutQuad
+
+
+        method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
+        if interp_range > 0:
+            temp_combination[:interp_range] = lerp(np.repeat(current_consumption, interp_range),
+                                           temp_combination[:interp_range],
+                                           method)
+
+        return temp_combination.values
+
+    def RNN_resids(self, training_window=1440 * 60, k=7,recent_baseline_length=5, 
+        num_samples = 2000, nn_file = False, trained_nn_file = "", lag = 30):
+
+        # TODO nn with 1440 input nodes. Train 
+
+        training_data = pd.read_csv("resids_baseline.csv")
+
+        # make MinMaxScalers for the dataset
+        
+        scaler_resids = MinMaxScaler(feature_range=(-1, 1))
+        scaler_baseline = MinMaxScaler(feature_range=(-1, 1))
+        scaler_time = MinMaxScaler(feature_range=(-1, 1))
+
+        X= training_data[['time', "b_predictor"]].sample(num_samples)
+        Y = scaler_resids.fit_transform(training_data[["resids"]].loc[X.index])
+
+        X = X.fillna(value=0)
+        X["b_predictor"]= scaler_baseline.fit_transform(X["b_predictor"].values.reshape(-1,1))
+        X = X.iloc[1:]
+
+        if X["time"].iloc[0]==0:
+            X=X.iloc[1:]
+
+        X["time"] = [i.replace("-07:00","") for i in X["time"]]
+        X["time"] = [datetime.strptime(i, '%Y-%m-%d %H:%M:%S') for i in X["time"]]
+        days = [i.weekday() for i in X["time"]]
+        X["weekday"] = [is_weekday(i) for i in days]
+        X["time"] = scaler_time.fit_transform(X["time"].values.reshape(-1,1))
+        
+        Y = Y.reshape(-1,1)
+        Y = Y[1:] 
+
+        Ys_supervised = pd.DataFrame(timeseries_to_supervised(Y, lag=lag).values)
+
+        X = pd.concat([X.reset_index(drop=True), pd.DataFrame(Ys_supervised.take(range(0, lag), axis = 1))], axis = 1)
+        X = X.values.reshape(-1,3+lag)
+        Y = Ys_supervised.take([lag], axis = 1)
+        Y = Y.values.reshape(-1,1)
+        X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
+
+        batch_size = 1
+        training_times= 10
+
+        if not nn_file:
+            trained_nn_file = "nn_samples_"+ str(num_samples)+"_lag_"+str(lag) +"_epochs_"+str(training_times)+ ".json"
+            trained_nn_weights_file = "nn_samples_"+ str(num_samples)+"_lag_"+str(lag) +"_epochs_"+str(training_times)+ ".h5"
+
+        if os.path.isfile(trained_nn_file):
+            json_file = open(trained_nn_file, 'r')
+            loaded_model_json = json_file.read()
+            model = model_from_json(loaded_model_json)
+            model.load_weights(trained_nn_weights_file)
+            print "Loaded NN model :: ", model
+        
+        else:
+            print("training!")
+            # train the model 
+            model = Sequential()
+            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3+lag), stateful = True, return_sequences=True))
+
+            # ^-- remember that 3 is based on the number of "stable" features: currently, time, weekday, and baseline
+
+            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3+lag), stateful = True, return_sequences=True))
+            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3+lag), stateful = True))
+            model.add(Dense(1))
+            model.compile(loss='mean_squared_error', optimizer='adam')
+
+            for i in range(training_times):
+                model.fit(X, Y, epochs=1, batch_size=batch_size, verbose=2, shuffle = False)
+                model.reset_states()
+
+            # save it in a json
+            model_json= model.to_json()
+            with open(trained_nn_file, "w") as json_file:
+                json_file.write(model_json)
+            model.save_weights(trained_nn_weights_file)
+            print("saved trained net")
+
+        ## predicting based on the NN 
+
+        # setting up input data  
+
+        index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
+        result = (pd.DataFrame(scaler_time
+            .transform(index.values.reshape(-1,1)))
+            .rename(columns = {0:"time"}))
+
+        secs = scaler_time.inverse_transform(result["time"].reshape(-1,1)).reshape(-1)
+        result["weekday"] =  [is_weekday(i.weekday()) for i in pd.to_datetime(secs)]        
+        result["baseline_finder_preds"]= (scaler_baseline
+            .transform(self.algorithms["Baseline Finder"]()
+                    .reshape(-1,1)))
+
+        result["pred_means"] = np.zeros(result.shape[0])
+        ## nn stuff 
+        time_counter = X[-1][0][-lag:]
+        prediction_feeder = np.concatenate([X[-1][0][0:3], time_counter]).reshape(1,-1,lag+3)
+        current_prediction = model.predict(prediction_feeder, batch_size=batch_size)
+        trainPredict = scaler_resids.inverse_transform(current_prediction)    
+
+        # create and fit the LSTM network
+   
+        for i in range(self.prediction_window-1):
+            if lag ==1:
+                time_counter = current_prediction[0]
+            else: 
+                time_counter = np.append(prediction_feeder[0][0][-(lag-1):], current_prediction).reshape(1,1,-1)
+
+            prediction_feeder = np.append([result["time"].iloc[i], result["baseline_finder_preds"].iloc[i], 
+            result["weekday"].iloc[i]], time_counter).reshape(1,-1,lag+3)
+            current_prediction = model.predict(prediction_feeder, batch_size=batch_size)
+            trainPredict = np.append(trainPredict, scaler_resids.inverse_transform(current_prediction))
+
+        # predicting
+
+        temp_combination = trainPredict+ scaler_resids.inverse_transform(result["baseline_finder_preds"].values.reshape(-1,1))[0]
 
         data_temp = training_data["b_predictor"] + training_data["resids"]
         recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
@@ -713,16 +932,126 @@ class IEC(object):
         interp_range=120
         long_term_ease_method=easeOutQuad
 
+
+
         method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
         if interp_range > 0:
             temp_combination[:interp_range] = lerp(np.repeat(recent_baseline, interp_range),
                                            temp_combination[:interp_range],
                                            method)
 
-        return temp_combination.values
+        return temp_combination
+
+    def RNN_resids_no_lag(self, training_window=1440 * 60, k=7,recent_baseline_length=5, 
+        num_samples = 2000, nn_file = False, trained_nn_file = ""):
+
+        training_data = pd.read_csv("resids_baseline.csv")
+
+        # make MinMaxScalers for the dataset
+        
+        scaler_resids = MinMaxScaler(feature_range=(-1, 1))
+        scaler_baseline = MinMaxScaler(feature_range=(-1, 1))
+        scaler_time = MinMaxScaler(feature_range=(-1, 1))
+
+        X= training_data[['time', "b_predictor"]].sample(num_samples)
+        Y = scaler_resids.fit_transform(training_data[["resids"]].loc[X.index])
+
+        X = X.fillna(value=0)
+        X["b_predictor"]= scaler_baseline.fit_transform(X["b_predictor"].values.reshape(-1,1))
+        X = X.iloc[1:]
+
+        if X["time"].iloc[0]==0:
+            X=X.iloc[1:]
+
+        X["time"] = [i.replace("-07:00","") for i in X["time"]]
+        X["time"] = [datetime.strptime(i, '%Y-%m-%d %H:%M:%S') for i in X["time"]]
+        days = [i.weekday() for i in X["time"]]
+        X["weekday"] = [is_weekday(i) for i in days]
+        X["time"] = scaler_time.fit_transform(X["time"].values.reshape(-1,1))
+        
+        Y = Y.reshape(-1,1)
+        Y = Y[1:] 
+
+        X = X.values.reshape(-1,3)
+        X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
+
+        batch_size = 1
+        training_times= 10
+
+        if not nn_file:
+            trained_nn_file = "nn_samples_"+ str(num_samples) +"_epochs_"+str(training_times)+ ".json"
+            trained_nn_weights_file = "nn_samples_"+ str(num_samples)+"_epochs_"+str(training_times)+ ".h5"
+
+        if os.path.isfile(trained_nn_file):
+            json_file = open(trained_nn_file, 'r')
+            loaded_model_json = json_file.read()
+            model = model_from_json(loaded_model_json)
+            model.load_weights(trained_nn_weights_file)
+            print "Loaded NN model :: ", model
+        
+        else:
+            print("training!")
+            # train the model 
+            model = Sequential()
+            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3), stateful = True, return_sequences=True))
+
+            # ^-- remember that 3 is based on the number of "stable" features: currently, time, weekday, and baseline
+
+            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3), stateful = True, return_sequences=True))
+            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3), stateful = True))
+            model.add(Dense(1))
+            model.compile(loss='mean_squared_error', optimizer='adam')
+
+            for i in range(training_times):
+                model.fit(X, Y, epochs=1, batch_size=batch_size, verbose=2, shuffle = False)
+                model.reset_states()
+
+            # save it in a json
+            model_json= model.to_json()
+            with open(trained_nn_file, "w") as json_file:
+                json_file.write(model_json)
+            model.save_weights(trained_nn_weights_file)
+            print("saved trained net")
+
+        ## predicting based on the NN 
+
+        # setting up input data  
+
+        index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
+        result = (pd.DataFrame(scaler_time
+            .transform(index.values.reshape(-1,1)))
+            .rename(columns = {0:"time"}))
+
+        secs = scaler_time.inverse_transform(result["time"].reshape(-1,1)).reshape(-1)
+        result["weekday"] =  [is_weekday(i.weekday()) for i in pd.to_datetime(secs)]        
+        result["baseline_finder_preds"]= (scaler_baseline
+            .transform(self.algorithms["Baseline Finder"]()
+                    .reshape(-1,1)))
+
+        prediction_feeder = result.values.reshape(1,-1,1)
+
+        result["pred_means"] = scaler_resids.inverse_transform(model.predict(prediction_feeder, batch_size=batch_size))
+  
+
+        temp_combination = result["pred_means"]+ scaler_resids.inverse_transform(result["baseline_finder_preds"].values.reshape(-1,1))[0]
+
+        data_temp = training_data["b_predictor"] + training_data["resids"]
+        recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
+        
+        interp_range=120
+        long_term_ease_method=easeOutQuad
+
+        # method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
+        # if interp_range > 0:
+        #     temp_combination[:interp_range] = lerp(np.repeat(recent_baseline, interp_range),
+        #                                    temp_combination[:interp_range],
+        #                                    method)
+
+        return temp_combination
 
 
     def predict(self, alg_keys):
+
         index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window)
         result_pred = pd.DataFrame(index=index)
         for key in alg_keys:
@@ -739,8 +1068,8 @@ class IEC(object):
         mean = training_data[cons_col].mean()
         return np.repeat(mean, self.prediction_window)
 
-    def baseline_finder(self, training_window=1440 * 60, k=7, long_interp_range=300, short_interp_range=15,
-                        half_window=100, similarity_interval=15, recent_baseline_length=200,
+    def baseline_finder(self, training_window=1440 * 60, k=7, long_interp_range=30, short_interp_range=15,
+                        half_window=50, similarity_interval=15, recent_baseline_length=60,
                         observation_length_addition=240, short_term_ease_method=easeOutQuad,
                         long_term_ease_method=easeOutQuad):
         training_data = self.data.tail(training_window)[[cons_col]]
@@ -873,6 +1202,8 @@ class IEC(object):
 
         return Predictions
 
+
+
 def worker(ie, alg_keys):
     return ie.predict(alg_keys)
 
@@ -921,7 +1252,6 @@ class IECTester:
             pickle.dump(savedata, f)
 
     def run(self, multithread=True, force_processes=None, *args):
-
         """Runs the tester and saves the result
         """
         
