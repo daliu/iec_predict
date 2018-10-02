@@ -61,7 +61,7 @@ hod = HodClient("xbos/hod")
 #
 #
 
-SITE = "hayward-station-8" # TODO: get a different site and zone. Go on Mr. Plotter, choose a different building, expand a tree and pick a zone
+SITE = "ciee" # TODO: get a different site and zone. Go on Mr. Plotter, choose a different building, expand a tree and pick a zone
 
 print "Site: " + SITE  
 
@@ -113,10 +113,8 @@ resp = mdal.do_query(building_meters_query_mdal)
 
 df = resp['df']
 
-
-
-#demand = "4d6e251a-48e1-3bc0-907d-7d5440c34bb9" --> for ciee
-demand = "b5ccea9a-7dfa-388c-9060-3adb55001f6e"
+demand = "4d6e251a-48e1-3bc0-907d-7d5440c34bb9" #--> for ciee
+#demand = "b5ccea9a-7dfa-388c-9060-3adb55001f6e" # --> for harward_8
 
 
 # lighting_meter_query_mdal = {
