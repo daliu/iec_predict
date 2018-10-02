@@ -24,14 +24,12 @@ from house import IEC # Prediction model.
 import pdb
 
 
-
-
 now1 = datetime.utcnow().replace(tzinfo=pytz.timezone("UTC")).astimezone(
 	    tz=pytz.timezone("America/Los_Angeles"))
 
-ending_times = [(now1-timedelta(hours = 24*i)) for i in range(100)]
+ending_times = [(now1-timedelta(hours = 72*i)) for i in range(288)]
 
-master_resid_array = pd.DataFrame([[0,0]],columns = ["time", "resids"])
+master_resid_array = pd.DataFrame([[0,0,0]],columns = ["time", "resids","b_predictor"])
 
 for now in ending_times:
 
@@ -71,16 +69,16 @@ for now in ending_times:
 	    ?tstat rdf:type brick:Thermostat_Status .
 	    ?tstat bf:uuid ?status_uuid .
 	};"""
-	lighting_state_query = """SELECT ?lighting ?state_uuid FROM %s WHERE {
-	    ?light rdf:type brick:Lighting_State .
-	    ?light bf:uuid ?state_uuid
-	};"""
-	lighting_meter_query = """SELECT ?lighting ?meter_uuid FROM %s WHERE {
-	    ?meter rdf:type brick:Electric_Meter .
-	    ?lighting rdf:type brick:Lighting_System .
-	    ?lighting bf:hasPoint ?meter .
-	    ?meter bf:uuid ?meter_uuid
-	};"""
+	# lighting_state_query = """SELECT ?lighting ?state_uuid FROM %s WHERE {
+	#     ?light rdf:type brick:Lighting_State .
+	#     ?light bf:uuid ?state_uuid
+	# };"""
+	# lighting_meter_query = """SELECT ?lighting ?meter_uuid FROM %s WHERE {
+	#     ?meter rdf:type brick:Electric_Meter .
+	#     ?lighting rdf:type brick:Lighting_System .
+	#     ?lighting bf:hasPoint ?meter .
+	#     ?meter bf:uuid ?meter_uuid
+	# };"""
 
 	building_meters_query_mdal = {
 	    "Composition": ["meter", "tstat_state"],  # defined under "Variables"
@@ -106,28 +104,28 @@ for now in ending_times:
 	resp = mdal.do_query(building_meters_query_mdal)
 	df = resp['df']
 
-	demand = "4d6e251a-48e1-3bc0-907d-7d5440c34bb9"
+	demand = "4d6e251a-48e1-3bc0-907d-7d5440c34bb9" # for ciee
+	# demand = "b5ccea9a-7dfa-388c-9060-3adb55001f6e" # for Hayward-station-8
 
-
-	lighting_meter_query_mdal = {
-	    "Composition": ["lighting"],
-	    "Selectors": [MEAN],
-	    "Variables": [
-	        {
-	            "Name": "lighting",
-	            "Definition": lighting_meter_query % SITE,
-	            "Units": "kW"
-	        },
-	    ],
-	    "Time": {
-	        "T0": start, "T1": end,
-	        "WindowSize": WINDOW,
-	        "Aligned": True,
-	    }
-	}
+	# lighting_meter_query_mdal = {
+	#     "Composition": ["lighting"],
+	#     "Selectors": [MEAN],
+	#     "Variables": [
+	#         {
+	#             "Name": "lighting",
+	#             "Definition": lighting_meter_query % SITE,
+	#             "Units": "kW"
+	#         },
+	#     ],
+	#     "Time": {
+	#         "T0": start, "T1": end,
+	#         "WindowSize": WINDOW,
+	#         "Aligned": True,
+	#     }
+	# }
 	# queries the data from the database with mdal
-	resp = mdal.do_query(lighting_meter_query_mdal, timeout=120)
-	lighting_df = resp['df']
+	# resp = mdal.do_query(lighting_meter_query_mdal, timeout=120)
+	# lighting_df = resp['df']
 
 	# TODO find out the right values. Marco is working on this
 	heating_consume = .3  # in kW
@@ -158,7 +156,7 @@ for now in ending_times:
 
 	future_window = 12 * 60
 	model = IEC(meterdata[:yesterday].fillna(value = 0), prediction_window = future_window)
-	algo_name = ["Baseline Finder"]
+	algo_name = ["b4"]
 	prediction = model.predict(algo_name)
 
 	time_index = pd.DataFrame(meterdata.index[-future_window:]).rename(columns = {0:"time"})
@@ -166,12 +164,45 @@ for now in ending_times:
 	a = (meterdata[["House Consumption"]][-future_window:].fillna(value=0).values - \
 		prediction[algo_name].fillna(value= 0).values)
 	time_index["resids"] = a
+	time_index["b_predictor"]= meterdata[["House Consumption"]][-future_window:].fillna(value=0).values
 
 	master_resid_array = master_resid_array.append(time_index)
 
+print("ready to save csv")
+#pdb.set_trace()
+inds = master_resid_array[["b_predictor"]]==0
+master_resid_array = master_resid_array[inds==False]
+master_resid_array.to_csv("ciee_resids_b4_3_year.csv")
 
-pdb.set_trace()
-master_resid_array.drop([0]).to_csv("resids.csv")
+
+
+########## notes from meeting with Daniel 
+
+## Server/Buidlings: 
+# information about each building -- building configuration file and zone configuration file 
+# discomfort and prices -- optimize for discomfort and prices. Lambda value 
+# heating consumption -- what you substract from your consumption to figure out base consumption 
+### Ask thanos about heating -- is it gas generated, therefore not in the meter calculation? 
+## Server/controller.py:
+# reads the simulation file, starts a prediction if it needs (MPC), then returns nothing 
+## MPC: weather forecasting from dataManager
+# reads more of the configuration files 
+# trains occupancy sensorsand other models in Server/MPC/py files, has Discomfort class, 
+# energyConsumption, Occupancy.py, 
+## Server/MPC/Advise.py 
+# Advise class: shortest path down a tree that is populated by control predictions and pricing 
+# def shortest_path(): 1 (heating), 0 (no action), 2 (cooling) -- utils file. Discomfort and cost put together: usage cost
+# goes down (up) the tree greedily. 4 hours ahead. 
+# Sensitivity analysis on demand charges will be done when the graph adds new nodes and new edges 
+# min edge algorith: find the path where the edge is minimized. 
+# parameters could be normalized. Might not be linear. 
+
+# this graph can also be used as a debugger 
+
+# retrain this every two weeks -- function that takes in data. Stable. 
+# make sure that it's ready and usable, stable. 
+
+
 
 
 

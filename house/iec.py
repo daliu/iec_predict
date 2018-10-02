@@ -25,6 +25,7 @@ from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 import time 
 import pdb
+import IPython
 
 import math
 from keras.models import Sequential
@@ -131,6 +132,13 @@ def find_similar_days(training_data, observation_length, k, interval, method=cos
         (training_data.index.hour == now.hour) &
         (training_data.index > min_time)
     )
+
+    # selector = (
+    #     ((np.abs(training_data.index.minute - now.minute)) < 5) &
+    #     (training_data.index.hour == now.hour) &
+    #     (training_data.index > min_time)
+    # )
+
     similar_moments = training_data[selector][:-1].tz_convert('UTC')
 
     if similar_moments.empty:
@@ -251,7 +259,7 @@ def kernel_transformer(kernel = "PeriodicMatern52", dim = 1):
     if kernel is 'Cosine':
         kernel = GPy.kern.Cosine(dim)    
     if kernel is 'CosineCustom':
-        kernel = GPy.kern.Cosine(dim, lengthscale = 10)
+        kernel = GPy.kern.Cosine(dim, lengthscale = .1)
     if kernel is 'DEtime':
         kernel = GPy.kern.DEtime(dim)
     if kernel is 'DiffGenomeKern':
@@ -511,13 +519,11 @@ class IEC(object):
             "residGP1": partial(self.GP_resids, training_window=1440*60, k=5,
                 kernel="RBF", num_samples = 1600), # shorter than an hour ahead, shorter than predictive horizon 
             "residGP2": partial(self.GP_resids, training_window=1440*60, k=5, 
-                kernel="CosineCustom", num_samples=3000),            
+                kernel="Cosine", num_samples=2000),            
             "residGP3": partial(self.GP_resids, training_window=1440*60, k=5, 
                 kernel="StdPeriodic", num_samples=2000),            
             "residGP4": partial(self.GP_resids, training_window=1440*60, k=5, 
                 kernel="StdPeriodicSum", num_samples=2000),
-            "residRNN": partial(self.RNN_resids, training_window= 1440*60, k=7, recent_baseline_length=5, 
-                num_samples = 2000, nn_file = False, trained_nn_file = "", lag = 1),
             "residRNN_nolag": partial(self.RNN_resids_no_lag, training_window= 1440*60, k=7, recent_baseline_length=5, 
                 num_samples = 2000, nn_file = False, trained_nn_file = "")
         }
@@ -686,14 +692,11 @@ class IEC(object):
         recent_baseline_length=60, num_samples = 3000, GP_file = False, trained_GP_file = ""):
 
         dim = 2
-
         kernel_name = kernel
         kernel=kernel_transformer(kernel_name,dim = dim)
 
         # TODO: make the model update every 2 weeks. (Someone has to help here -- ask Dave.)
-
         training_data = pd.read_csv("resids_baseline_year.csv") 
-
 
         # make MinMaxScalers for the dataset
         scaler_resids = MinMaxScaler(feature_range=(0, 1))
@@ -709,9 +712,7 @@ class IEC(object):
         X["time"] = [i.replace("-08:00","") for i in X["time"]]
         X["time"] = [datetime.strptime(i, '%Y-%m-%d %H:%M:%S') for i in X["time"]]
 
-
         seasons = [get_season(i) for i in X["time"]]
-
         # X["is_fall"]  = [int(i == "fall")*.2 for i in seasons]
         # X["is_spring"] = [int(i == "spring")*.2 for i in seasons]
         # X["is_summer"] = [int(i == "summer")*.2 for i in seasons]
@@ -719,8 +720,6 @@ class IEC(object):
 
         # days = [i.weekday() for i in X["time"]]
         # X["weekday"] = [is_weekday(i)*.2 for i in days]
-
-
         # X["is_workhour"] = [(is_workday(i.hour) and is_weekday(i.weekday()))*.2 for i in X["time"]]
         X["time"] = scaler_time.fit_transform(X["time"].values.reshape(-1,1))
 
@@ -737,9 +736,7 @@ class IEC(object):
             print "Loaded GP model :: ", m
         
         else:
-
             # train the model --- 
-
             m = GPy.models.GPRegression(X,Y,kernel)
             m.optimize(messages=True)
 
@@ -750,7 +747,6 @@ class IEC(object):
 
             
         ## predicting based on the GP 
-
         # setting up input data  
 
         index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
@@ -762,7 +758,6 @@ class IEC(object):
             .transform(self.algorithms["Baseline Finder"]()
                     .reshape(-1,1)))
         
-
         # seasons = [get_season(i) for i in result["time"]]
         # result["is_fall"]  = [int(i == "fall")*.2 for i in seasons]
         # result["is_spring"] = [int(i == "spring")*.2 for i in seasons]
@@ -792,14 +787,13 @@ class IEC(object):
 
         data_temp = training_data["b_predictor"] + training_data["resids"]
         recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
-        current_consumption = training_data.tail(1)[cons_col]
-        
+        current_consumption = self.data.tail(1)[[cons_col]].values
+
         # TODO: the smoothing should be done using the GP 
         # how does a GP prediction do more upfront then towards the end of the data? 
 
         interp_range=120
         long_term_ease_method=easeOutQuad
-
 
         method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
         if interp_range > 0:
@@ -808,139 +802,6 @@ class IEC(object):
                                            method)
 
         return temp_combination.values
-
-    def RNN_resids(self, training_window=1440 * 60, k=7,recent_baseline_length=5, 
-        num_samples = 2000, nn_file = False, trained_nn_file = "", lag = 30):
-
-        # TODO nn with 1440 input nodes. Train 
-
-        training_data = pd.read_csv("resids_baseline.csv")
-
-        # make MinMaxScalers for the dataset
-        
-        scaler_resids = MinMaxScaler(feature_range=(-1, 1))
-        scaler_baseline = MinMaxScaler(feature_range=(-1, 1))
-        scaler_time = MinMaxScaler(feature_range=(-1, 1))
-
-        X= training_data[['time', "b_predictor"]].sample(num_samples)
-        Y = scaler_resids.fit_transform(training_data[["resids"]].loc[X.index])
-
-        X = X.fillna(value=0)
-        X["b_predictor"]= scaler_baseline.fit_transform(X["b_predictor"].values.reshape(-1,1))
-        X = X.iloc[1:]
-
-        if X["time"].iloc[0]==0:
-            X=X.iloc[1:]
-
-        X["time"] = [i.replace("-07:00","") for i in X["time"]]
-        X["time"] = [datetime.strptime(i, '%Y-%m-%d %H:%M:%S') for i in X["time"]]
-        days = [i.weekday() for i in X["time"]]
-        X["weekday"] = [is_weekday(i) for i in days]
-        X["time"] = scaler_time.fit_transform(X["time"].values.reshape(-1,1))
-        
-        Y = Y.reshape(-1,1)
-        Y = Y[1:] 
-
-        Ys_supervised = pd.DataFrame(timeseries_to_supervised(Y, lag=lag).values)
-
-        X = pd.concat([X.reset_index(drop=True), pd.DataFrame(Ys_supervised.take(range(0, lag), axis = 1))], axis = 1)
-        X = X.values.reshape(-1,3+lag)
-        Y = Ys_supervised.take([lag], axis = 1)
-        Y = Y.values.reshape(-1,1)
-        X = np.reshape(X, (X.shape[0], 1, X.shape[1]))
-
-        batch_size = 1
-        training_times= 10
-
-        if not nn_file:
-            trained_nn_file = "nn_samples_"+ str(num_samples)+"_lag_"+str(lag) +"_epochs_"+str(training_times)+ ".json"
-            trained_nn_weights_file = "nn_samples_"+ str(num_samples)+"_lag_"+str(lag) +"_epochs_"+str(training_times)+ ".h5"
-
-        if os.path.isfile(trained_nn_file):
-            json_file = open(trained_nn_file, 'r')
-            loaded_model_json = json_file.read()
-            model = model_from_json(loaded_model_json)
-            model.load_weights(trained_nn_weights_file)
-            print "Loaded NN model :: ", model
-        
-        else:
-            print("training!")
-            # train the model 
-            model = Sequential()
-            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3+lag), stateful = True, return_sequences=True))
-
-            # ^-- remember that 3 is based on the number of "stable" features: currently, time, weekday, and baseline
-
-            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3+lag), stateful = True, return_sequences=True))
-            model.add(LSTM(4, batch_input_shape=(batch_size, 1, 3+lag), stateful = True))
-            model.add(Dense(1))
-            model.compile(loss='mean_squared_error', optimizer='adam')
-
-            for i in range(training_times):
-                model.fit(X, Y, epochs=1, batch_size=batch_size, verbose=2, shuffle = False)
-                model.reset_states()
-
-            # save it in a json
-            model_json= model.to_json()
-            with open(trained_nn_file, "w") as json_file:
-                json_file.write(model_json)
-            model.save_weights(trained_nn_weights_file)
-            print("saved trained net")
-
-        ## predicting based on the NN 
-
-        # setting up input data  
-
-        index = pd.DatetimeIndex(start=self.now, freq='T', periods=self.prediction_window).to_datetime()
-        result = (pd.DataFrame(scaler_time
-            .transform(index.values.reshape(-1,1)))
-            .rename(columns = {0:"time"}))
-
-        secs = scaler_time.inverse_transform(result["time"].reshape(-1,1)).reshape(-1)
-        result["weekday"] =  [is_weekday(i.weekday()) for i in pd.to_datetime(secs)]        
-        result["baseline_finder_preds"]= (scaler_baseline
-            .transform(self.algorithms["Baseline Finder"]()
-                    .reshape(-1,1)))
-
-        result["pred_means"] = np.zeros(result.shape[0])
-        ## nn stuff 
-        time_counter = X[-1][0][-lag:]
-        prediction_feeder = np.concatenate([X[-1][0][0:3], time_counter]).reshape(1,-1,lag+3)
-        current_prediction = model.predict(prediction_feeder, batch_size=batch_size)
-        trainPredict = scaler_resids.inverse_transform(current_prediction)    
-
-        # create and fit the LSTM network
-   
-        for i in range(self.prediction_window-1):
-            if lag ==1:
-                time_counter = current_prediction[0]
-            else: 
-                time_counter = np.append(prediction_feeder[0][0][-(lag-1):], current_prediction).reshape(1,1,-1)
-
-            prediction_feeder = np.append([result["time"].iloc[i], result["baseline_finder_preds"].iloc[i], 
-            result["weekday"].iloc[i]], time_counter).reshape(1,-1,lag+3)
-            current_prediction = model.predict(prediction_feeder, batch_size=batch_size)
-            trainPredict = np.append(trainPredict, scaler_resids.inverse_transform(current_prediction))
-
-        # predicting
-
-        temp_combination = trainPredict+ scaler_resids.inverse_transform(result["baseline_finder_preds"].values.reshape(-1,1))[0]
-
-        data_temp = training_data["b_predictor"] + training_data["resids"]
-        recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
-        
-        interp_range=120
-        long_term_ease_method=easeOutQuad
-
-
-
-        method = np.array(list(map(lambda x: long_term_ease_method(x, 0, 1, interp_range), np.arange(interp_range))))
-        if interp_range > 0:
-            temp_combination[:interp_range] = lerp(np.repeat(recent_baseline, interp_range),
-                                           temp_combination[:interp_range],
-                                           method)
-
-        return temp_combination
 
     def RNN_resids_no_lag(self, training_window=1440 * 60, k=7,recent_baseline_length=5, 
         num_samples = 2000, nn_file = False, trained_nn_file = ""):
@@ -1028,12 +889,14 @@ class IEC(object):
             .transform(self.algorithms["Baseline Finder"]()
                     .reshape(-1,1)))
 
-        prediction_feeder = result.values.reshape(1,-1,1)
+        prediction_feeder = result.values.reshape(-1,1,3) # <<-- 
 
         result["pred_means"] = scaler_resids.inverse_transform(model.predict(prediction_feeder, batch_size=batch_size))
   
-
-        temp_combination = result["pred_means"]+ scaler_resids.inverse_transform(result["baseline_finder_preds"].values.reshape(-1,1))[0]
+        temp_combination = result["pred_means"]+ (scaler_resids.
+            inverse_transform(result["baseline_finder_preds"]
+                .values.reshape(-1,1))
+            .reshape(-1))
 
         data_temp = training_data["b_predictor"] + training_data["resids"]
         recent_baseline = np.nanmean(data_temp[-recent_baseline_length:-1].values.reshape(-1,1))
@@ -1047,7 +910,7 @@ class IEC(object):
         #                                    temp_combination[:interp_range],
         #                                    method)
 
-        return temp_combination
+        return temp_combination.values
 
 
     def predict(self, alg_keys):
